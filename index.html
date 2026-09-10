@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E-Catalogue Flipbook & Manager</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- PDF.js Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <!-- Page-Flip JS Library -->
+    <script src="https://cdn.jsdelivr.net/npm/page-flip@2.0.7/dist/js/page-flip.browser.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- SweetAlert2 for nice alerts -->
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    
+    <style>
+        body { 
+            background-color: #f1f3f6; 
+            color: #1e293b; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        /* --- Viewer Styles --- */
+        #canvas-container { 
+            display: flex; justify-content: center; align-items: center; 
+            min-height: calc(100vh - 120px); width: 100%; overflow: hidden; position: relative;
+        }
+        #book-wrapper { box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.25); }
+        .page-wrapper {
+            background-color: white; display: flex; justify-content: center; align-items: center; overflow: hidden;
+        }
+        .page-wrapper canvas { width: 100%; height: 100%; object-fit: cover; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        
+        /* Loading Overlay for API */
+        #api-loading { display: none; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between select-none">
+
+    <!-- OVERLAY LOADING UNTUK GITHUB API -->
+    <div id="api-loading" class="fixed inset-0 z-[100] bg-slate-900/50 backdrop-blur-sm flex flex-col justify-center items-center">
+        <div class="w-12 h-12 border-4 border-white border-t-transparent rounded-full animate-spin"></div>
+        <p class="mt-4 text-white font-medium shadow-sm" id="api-loading-text">Sedang memproses...</p>
+    </div>
+
+    <!-- ================= VIEW 1: FLIPBOOK VIEWER ================= -->
+    <div id="viewer-view" class="hidden flex-col flex-1 relative">
+        <header class="bg-white/90 backdrop-blur-md border-b border-slate-200/80 px-4 py-3 flex justify-between items-center sticky top-0 z-40 shadow-sm">
+            <div class="flex items-center gap-2 max-w-[250px] md:max-w-md">
+                <h1 id="doc-title" class="font-semibold text-sm md:text-base text-slate-800 truncate">E-Catalogue</h1>
+            </div>
+            <div class="bg-slate-100 border border-slate-200 rounded-full px-3 py-1 text-xs md:text-sm font-medium text-slate-600 shadow-inner">
+                <span id="page-indicator">Loading...</span>
+            </div>
+            <div class="flex items-center gap-1 md:gap-2">
+                <button onclick="window.location.href='index.html'" class="p-2 hover:bg-slate-100 rounded-lg text-slate-600 transition" title="Kembali ke Dashboard">
+                    <i data-lucide="home" class="w-5 h-5"></i>
+                </button>
+            </div>
+        </header>
+
+        <main id="canvas-container" class="flex-1 relative flex items-center justify-center p-4">
+            <button onclick="if(flipBook) flipBook.turnToPrevPage()" class="absolute left-2 md:left-6 z-30 p-3 bg-white/80 hover:bg-white text-slate-700 rounded-full shadow-lg border border-slate-200 transition">
+                <i data-lucide="chevron-left" class="w-6 h-6"></i>
+            </button>
+            <div id="loading" class="flex flex-col justify-center items-center gap-4 py-20 z-10 text-center">
+                <div class="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
+                <p class="text-slate-600 font-medium text-sm">Memuatkan katalog...</p>
+            </div>
+            <div id="book-anchor" class="z-10"></div>
+            <button onclick="if(flipBook) flipBook.turnToNextPage()" class="absolute right-2 md:right-6 z-30 p-3 bg-white/80 hover:bg-white text-slate-700 rounded-full shadow-lg border border-slate-200 transition">
+                <i data-lucide="chevron-right" class="w-6 h-6"></i>
+            </button>
+        </main>
+        
+        <footer class="fixed bottom-4 left-1/2 -translate-x-1/2 z-40">
+            <!-- (Toolbar dikekalkan dari versi asal) -->
+            <div class="bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-full px-5 py-2 shadow-xl flex items-center gap-3 text-slate-700">
+                <button onclick="toggleThumbnailsModal()" class="p-2 hover:bg-slate-100 rounded-full" title="Grid"><i data-lucide="layout-grid" class="w-5 h-5"></i></button>
+                <div class="w-[1px] h-5 bg-slate-200"></div>
+                <button onclick="copyCurrentUrl()" class="p-2 hover:bg-slate-100 rounded-full"><i data-lucide="share-2" class="w-5 h-5"></i></button>
+                <button onclick="toggleFullscreen()" class="p-2 hover:bg-slate-100 rounded-full"><i data-lucide="maximize" class="w-5 h-5"></i></button>
+            </div>
+        </footer>
+    </div>
+
+    <!-- ================= VIEW 2: DASHBOARD ADMIN (MANAGER) ================= -->
+    <div id="dashboard-view" class="hidden flex-1 container mx-auto px-4 py-8 max-w-5xl">
+        <div class="text-center mb-8">
+            <h1 class="text-3xl font-bold text-slate-900 mb-2">Admin Panel: E-Catalogue</h1>
+            <p class="text-slate-600">Urus, muat naik dan terbit katalog digital anda secara terus ke GitHub</p>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            <!-- PANEL KIRI: TETAPAN & MUAT NAIK -->
+            <div class="lg:col-span-1 space-y-6">
+                <!-- Tetapan Token GitHub -->
+                <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+                    <h2 class="text-sm font-bold mb-3 text-slate-800 flex items-center gap-2 uppercase tracking-wide">
+                        <i data-lucide="key" class="w-4 h-4 text-orange-500"></i> Tetapan Keselamatan
+                    </h2>
+                    <div class="space-y-3">
+                        <p class="text-xs text-slate-500">Masukkan <b>GitHub Personal Access Token (PAT)</b> untuk membolehkan muat naik/padam fail.</p>
+                        <input type="password" id="gh-token" placeholder="ghp_xxxxxxxxxxxx" 
+                               class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+                        <button onclick="saveToken()" class="w-full bg-slate-800 hover:bg-slate-900 text-white text-sm py-2 rounded-lg font-medium transition">
+                            Simpan Token
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Muat Naik PDF -->
+                <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+                    <h2 class="text-sm font-bold mb-4 text-slate-800 flex items-center gap-2 uppercase tracking-wide">
+                        <i data-lucide="upload-cloud" class="w-4 h-4 text-blue-600"></i> Muat Naik PDF Baru
+                    </h2>
+                    <div class="border-2 border-dashed border-slate-300 rounded-xl p-6 text-center hover:bg-slate-50 transition cursor-pointer" onclick="document.getElementById('pdf-upload').click()">
+                        <i data-lucide="file-text" class="w-10 h-10 text-slate-400 mx-auto mb-2"></i>
+                        <p class="text-sm font-medium text-slate-700">Klik untuk pilih fail PDF</p>
+                        <p class="text-xs text-slate-500 mt-1" id="file-name-display">Tiada fail dipilih</p>
+                        <input type="file" id="pdf-upload" accept="application/pdf" class="hidden" onchange="handleFileSelect(event)">
+                    </div>
+                    <button onclick="uploadToGithub()" id="btn-upload" disabled class="mt-4 w-full bg-blue-600 disabled:bg-slate-300 hover:bg-blue-700 text-white text-sm py-2.5 rounded-lg font-medium transition flex justify-center items-center gap-2">
+                        <i data-lucide="upload" class="w-4 h-4"></i> Muat Naik ke GitHub
+                    </button>
+                </div>
+            </div>
+
+            <!-- PANEL KANAN: PENGURUSAN FAIL & TERBITAN -->
+            <div class="lg:col-span-2 space-y-6">
+                
+                <!-- URL Terbitan (Publish) -->
+                <div id="publish-section" class="hidden bg-emerald-50 border border-emerald-200 rounded-2xl p-5 shadow-sm">
+                    <h2 class="text-sm font-bold mb-3 text-emerald-800 flex items-center gap-2 uppercase tracking-wide">
+                        <i data-lucide="check-circle" class="w-4 h-4 text-emerald-600"></i> Pautan E-Catalogue Sedia Dikongsi
+                    </h2>
+                    <div class="flex gap-2">
+                        <input type="text" id="generated-url" readonly class="flex-1 bg-white border border-emerald-300 rounded-lg px-3 py-2 text-emerald-700 text-sm focus:outline-none">
+                        <button onclick="copyGeneratedUrl()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition flex items-center gap-1">
+                            <i data-lucide="copy" class="w-4 h-4"></i> Salin
+                        </button>
+                        <a id="preview-btn" target="_blank" href="#" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm font-medium transition flex items-center gap-1">
+                            <i data-lucide="external-link" class="w-4 h-4"></i> Buka
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Senarai PDF di Server -->
+                <div class="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                    <div class="p-5 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+                        <h2 class="text-sm font-bold text-slate-800 flex items-center gap-2 uppercase tracking-wide">
+                            <i data-lucide="database" class="w-4 h-4 text-slate-600"></i> Pangkalan Data PDF (GitHub)
+                        </h2>
+                        <button onclick="fetchGitHubFiles()" class="text-xs flex items-center gap-1 text-blue-600 hover:text-blue-800 font-medium">
+                            <i data-lucide="refresh-cw" class="w-3 h-3"></i> Segarkan Senarai
+                        </button>
+                    </div>
+                    
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-sm text-slate-600">
+                            <thead class="bg-slate-100 text-slate-700 text-xs uppercase font-semibold">
+                                <tr>
+                                    <th class="px-5 py-3">Nama Fail PDF</th>
+                                    <th class="px-5 py-3">Saiz</th>
+                                    <th class="px-5 py-3 text-right">Tindakan</th>
+                                </tr>
+                            </thead>
+                            <tbody id="file-list-body" class="divide-y divide-slate-100">
+                                <!-- Data diisi melalui JS -->
+                                <tr>
+                                    <td colspan="3" class="px-5 py-8 text-center text-slate-400">Memuatkan data dari GitHub...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Modals -->
+    <div id="thumbnail-modal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center p-4">
+        <!-- Thumbnail Container -->
+    </div>
+    
+    <!-- JAVASCRIPT ENGINE -->
+    <script>
+        // ==========================================
+        // KONFIGURASI GITHUB API
+        // ==========================================
+        const GITHUB_OWNER = 'unifinetshield';
+        const GITHUB_REPO = 'ecatalogue';
+        const GITHUB_PATH = 'pdfs';
+
+        // ==========================================
+        // AWALAN APLIKASI
+        // ==========================================
+        document.addEventListener('DOMContentLoaded', () => {
+            lucide.createIcons();
+            
+            // Periksa sama ada URL mempunyai parameter ?file=
+            const urlParams = new URLSearchParams(window.location.search);
+            const pdfFile = urlParams.get('file');
+
+            if (pdfFile) {
+                // MOD: VIEWER FLIPBOOK
+                document.getElementById('viewer-view').classList.remove('hidden');
+                document.getElementById('viewer-view').classList.add('flex');
+                document.getElementById('doc-title').innerText = pdfFile.replace('.pdf', '');
+                loadPDF(`./pdfs/${pdfFile}`); // Panggil fungsi Lossless PDF yang lepas
+            } else {
+                // MOD: DASHBOARD ADMIN
+                document.getElementById('dashboard-view').classList.remove('hidden');
+                
+                // Semak jika token wujud di local storage
+                const savedToken = localStorage.getItem('gh_token');
+                if (savedToken) {
+                    document.getElementById('gh-token').value = savedToken;
+                    fetchGitHubFiles();
+                } else {
+                    document.getElementById('file-list-body').innerHTML = `
+                        <tr><td colspan="3" class="px-5 py-8 text-center text-red-500 font-medium">Sila masukkan GitHub Token dahulu.</td></tr>`;
+                }
+            }
+        });
+
+        // ==========================================
+        // FUNGSI PENGURUSAN GITHUB (ADMIN PANEL)
+        // ==========================================
+
+        function saveToken() {
+            const token = document.getElementById('gh-token').value.trim();
+            if(token) {
+                localStorage.setItem('gh_token', token);
+                Swal.fire('Berjaya', 'Token keselamatan disimpan.', 'success');
+                fetchGitHubFiles();
+            } else {
+                Swal.fire('Ralat', 'Sila masukkan token', 'error');
+            }
+        }
+
+        function showLoading(show, text="Sedang memproses...") {
+            document.getElementById('api-loading-text').innerText = text;
+            document.getElementById('api-loading').style.display = show ? 'flex' : 'none';
+        }
+
+        function formatBytes(bytes, decimals = 2) {
+            if (!+bytes) return '0 Bytes';
+            const k = 1024;
+            const dm = decimals < 0 ? 0 : decimals;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+        }
+
+        // AMBIL SENARAI FAIL DARI GITHUB
+        async function fetchGitHubFiles() {
+            const token = localStorage.getItem('gh_token');
+            if(!token) return;
+
+            const tbody = document.getElementById('file-list-body');
+            tbody.innerHTML = `<tr><td colspan="3" class="px-5 py-8 text-center text-slate-400">Memuat turun senarai...</td></tr>`;
+
+            try {
+                const response = await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${GITHUB_PATH}`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Accept': 'application/vnd.github.v3+json'
+                    }
+                });
+
+                if(!response.ok) throw new Error('Gagal mengakses repositori. Periksa token anda.');
+
+                const data = await response.json();
+                
+                // Tapis hanya fail PDF
+                const pdfs = data.filter(file => file.name.toLowerCase().endsWith('.pdf'));
+
+                if(pdfs.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="3" class="px-5 py-8 text-center text-slate-500">Tiada fail PDF dijumpai dalam folder /pdfs/</td></tr>`;
+                    return;
+                }
+
+                tbody.innerHTML = '';
+                pdfs.forEach(file => {
+                    tbody.innerHTML += `
+                        <tr class="hover:bg-slate-50 transition border-b border-slate-100 last:border-0">
+                            <td class="px-5 py-3 font-medium text-slate-800 flex items-center gap-2">
+                                <i data-lucide="file-text" class="w-4 h-4 text-red-500"></i> ${file.name}
+                            </td>
+                            <td class="px-5 py-3">${formatBytes(file.size)}</td>
+                            <td class="px-5 py-3 text-right">
+                                <button onclick="publishManual('${file.name}')" class="px-3 py-1.5 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded text-xs font-semibold mr-2 transition">
+                                    Publish
+                                </button>
+                                <button onclick="deleteFromGithub('${file.name}', '${file.sha}')" class="px-3 py-1.5 bg-red-100 text-red-700 hover:bg-red-200 rounded text-xs font-semibold transition">
+                                    Padam
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                });
+                lucide.createIcons();
+
+            } catch (error) {
+                tbody.innerHTML = `<tr><td colspan="3" class="px-5 py-8 text-center text-red-500">Ralat: ${error.message}</td></tr>`;
+            }
+        }
+
+        // PAPARKAN URL UNTUK DIKONGSI (PUBLISH MANUAL)
+        function publishManual(filename) {
+            const baseUrl = window.location.origin + window.location.pathname;
+            const finalUrl = `${baseUrl}?file=${encodeURIComponent(filename)}`;
+
+            document.getElementById('generated-url').value = finalUrl;
+            document.getElementById('preview-btn').href = finalUrl;
+            document.getElementById('publish-section').classList.remove('hidden');
+            
+            // Scroll automatik ke bahagian publish
+            document.getElementById('publish-section').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        function copyGeneratedUrl() {
+            navigator.clipboard.writeText(document.getElementById('generated-url').value);
+            Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Pautan disalin!', showConfirmButton: false, timer: 1500 });
+        }
+
+        // PENGENDALIAN FAIL INPUT
+        let selectedFileBase64 = null;
+        let selectedFileName = null;
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            if (file.type !== 'application/pdf') {
+                Swal.fire('Ralat Format', 'Sila pilih fail PDF sahaja.', 'error');
+                return;
+            }
+            
+            // GitHub API mempunyai had muat naik base64 (~50MB) 
+            if (file.size > 45 * 1024 * 1024) {
+                Swal.fire('Fail Terlalu Besar', 'Maksimum saiz fail untuk dimuat naik menerusi web ialah 45MB.', 'warning');
+                return;
+            }
+
+            selectedFileName = file.name;
+            document.getElementById('file-name-display').innerHTML = `<span class="text-blue-600 font-semibold">${file.name}</span> (${formatBytes(file.size)})`;
+            document.getElementById('btn-upload').disabled = true;
+            
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = () => {
+                // Buang "data:application/pdf;base64," untuk API GitHub
+                selectedFileBase64 = reader.result.split(',')[1]; 
+                document.getElementById('btn-upload').disabled = false;
+            };
+        }
+
+        // MUAT NAIK KE GITHUB 
+        async function uploadToGithub() {
+            const token = localStorage.getItem('gh_token');
+            if(!token) return Swal.fire('Ralat', 'Sila masukkan GitHub Token', 'error');
+            if(!selectedFileBase64 || !selectedFileName) return;
+
+            // Buang ruang kosong dari nama fail untuk elak ralat URL
+            const cleanFileName = selectedFileName.replace(/\s+/g, '-');
+
+            showLoading(true, "Memuat naik ke pelayan GitHub...");
+
+            try {
+                // API Request
+                const response = await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${GITHUB_PATH}/${cleanFileName}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: `Upload PDF: ${cleanFileName} via Web Manager`,
+                        content: selectedFileBase64,
+                        branch: 'main'
+                    })
+                });
+
+                const result = await response.json();
+
+                if(response.ok) {
+                    Swal.fire('Berjaya', 'Fail PDF berjaya dimuat naik ke repositori!', 'success');
+                    // Reset File Input
+                    document.getElementById('pdf-upload').value = '';
+                    document.getElementById('file-name-display').innerText = 'Tiada fail dipilih';
+                    document.getElementById('btn-upload').disabled = true;
+                    
+                    fetchGitHubFiles(); // Refresh senarai fail
+                    publishManual(cleanFileName); // Auto sedia untuk di-publish
+                } else {
+                    // Semak jika fail sudah wujud (Error 422 usually means sha is required to overwrite)
+                    if(result.message.includes("sha")) {
+                        Swal.fire('Gagal Muat Naik', 'Fail dengan nama ini sudah wujud. Sila tukar nama fail atau padam fail sedia ada.', 'error');
+                    } else {
+                        throw new Error(result.message);
+                    }
+                }
+            } catch (error) {
+                Swal.fire('Ralat API', error.message, 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // PADAM FAIL DARI GITHUB
+        async function deleteFromGithub(filename, sha) {
+            const token = localStorage.getItem('gh_token');
+            if(!token) return;
+
+            Swal.fire({
+                title: 'Padam Fail?',
+                text: `Anda pasti ingin memadam ${filename} dari GitHub?`,
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#d33',
+                cancelButtonColor: '#3085d6',
+                confirmButtonText: 'Ya, padam!',
+                cancelButtonText: 'Batal'
+            }).then(async (result) => {
+                if (result.isConfirmed) {
+                    showLoading(true, "Memadam fail...");
+                    
+                    try {
+                        const response = await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${GITHUB_PATH}/${filename}`, {
+                            method: 'DELETE',
+                            headers: {
+                                'Authorization': `Bearer ${token}`,
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                message: `Delete PDF: ${filename} via Web Manager`,
+                                sha: sha,
+                                branch: 'main'
+                            })
+                        });
+
+                        if(response.ok) {
+                            Swal.fire('Terpadam!', 'Fail berjaya dipadam dari repositori.', 'success');
+                            
+                            // Jika URL yang dipaparkan di bahagian publish ialah fail yang dipadam, sembunyikannya
+                            if(document.getElementById('generated-url').value.includes(filename)) {
+                                document.getElementById('publish-section').classList.add('hidden');
+                            }
+                            
+                            fetchGitHubFiles();
+                        } else {
+                            const err = await response.json();
+                            throw new Error(err.message);
+                        }
+                    } catch (error) {
+                        Swal.fire('Ralat', error.message, 'error');
+                    } finally {
+                        showLoading(false);
+                    }
+                }
+            });
+        }
+
+
+        // ==========================================
+        // FLIPBOOK VIEWER ENGINE (DIKEKALKAN)
+        // ==========================================
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        let flipBook = null;
+        
+        async function loadPDF(url) {
+            try {
+                const pdf = await pdfjsLib.getDocument(url).promise;
+                const totalPDFPages = pdf.numPages;
+                const page1 = await pdf.getPage(1);
+                const viewportBase = page1.getViewport({ scale: 1.0 });
+                
+                const HD_SCALE = 4.0; 
+                const container = document.getElementById('book-anchor');
+                container.innerHTML = '<div id="book-wrapper"></div>';
+                const bookElement = document.getElementById('book-wrapper');
+
+                for (let pageNum = 1; pageNum <= totalPDFPages; pageNum++) {
+                    const page = (pageNum === 1) ? page1 : await pdf.getPage(pageNum);
+                    const viewport = page.getViewport({ scale: HD_SCALE });
+                    const pageDiv = document.createElement('div');
+                    pageDiv.className = 'page-wrapper';
+                    const canvas = document.createElement('canvas');
+                    const context = canvas.getContext('2d', { alpha: false });
+                    canvas.height = Math.floor(viewport.height);
+                    canvas.width = Math.floor(viewport.width);
+                    await page.render({ canvasContext: context, viewport: viewport }).promise;
+                    pageDiv.appendChild(canvas);
+                    bookElement.appendChild(pageDiv);
+                }
+
+                document.getElementById('loading').classList.add('hidden');
+                flipBook = new St.PageFlip(bookElement, {
+                    width: Math.round(viewportBase.width) || 550,
+                    height: Math.round(viewportBase.height) || 733,
+                    size: "stretch", minWidth: 320, maxWidth: 1200, minHeight: 450, maxHeight: 1600,
+                    maxShadowOpacity: 0.35, showCover: true, mobileScrollSupport: false
+                });
+                flipBook.loadFromHTML(document.querySelectorAll('.page-wrapper'));
+
+            } catch (error) {
+                document.getElementById('loading').innerHTML = `<div class="text-red-500 font-bold p-6">Gagal memuatkan PDF dari server.</div>`;
+            }
+        }
+        
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+            } else {
+                if (document.exitFullscreen) document.exitFullscreen();
+            }
+        }
+        function copyCurrentUrl() {
+            navigator.clipboard.writeText(window.location.href);
+            Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Pautan disalin!', showConfirmButton: false, timer: 1500 });
+        }
+    </script>
+</body>
+</html>
